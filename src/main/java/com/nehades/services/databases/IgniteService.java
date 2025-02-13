@@ -1,32 +1,42 @@
 package com.nehades.services.databases;
 
 
-import org.apache.ignite.Ignite;
-import org.apache.ignite.IgniteCache;
-import org.apache.ignite.Ignition;
-import org.apache.ignite.cache.CacheMode;
+import com.nehades.services.AbstractDatabaseOperations;
+import com.nehades.services.databases.dto.ResponseDto;
+import net.minidev.json.JSONArray;
+import net.minidev.json.JSONObject;
+import org.apache.ignite.cache.query.FieldsQueryCursor;
 import org.apache.ignite.cache.query.SqlFieldsQuery;
 import org.apache.ignite.client.ClientCache;
 import org.apache.ignite.client.IgniteClient;
 import org.apache.ignite.configuration.*;
-import org.apache.ignite.internal.binary.BinaryMarshaller;
 import org.apache.ignite.internal.client.thin.TcpIgniteClient;
-import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
-import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import java.sql.SQLException;
-import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
 import java.util.Map;
 import java.util.StringJoiner;
 
 @Service
-public class IgniteService {
+public class IgniteService extends AbstractDatabaseOperations implements InsertSearchService {
 
-    private static  String igniteServerAddress = "127.0.0.1:10800";
+    private static String igniteServerAddress = "127.0.0.1:10800";
+    private final SqlService sqlService;
+    private final IgniteClient igniteClient;
 
-    public int createTable(String cacheName, String tableName, Map<String, String> fieldMap) throws ClassNotFoundException, SQLException {
+    public IgniteService(SqlService sqlService) {
+        super();
+        this.sqlService = sqlService;
+        ClientConfiguration cfg = new ClientConfiguration().setAddresses(igniteServerAddress);
+        igniteClient = TcpIgniteClient.start(cfg);
+    }
 
+    @Override
+    public int createTable(String cacheName, String tableName, Map<String, String> fieldMap) {
         // Configure the client
         ClientConfiguration cfg = new ClientConfiguration().setAddresses(igniteServerAddress);
 
@@ -44,12 +54,52 @@ public class IgniteService {
         return 0;
     }
 
-//    client.query(new SqlFieldsQuery(String.format(
-//            "CREATE TABLE IF NOT EXISTS Person (id INT PRIMARY KEY, name VARCHAR) WITH \"VALUE_TYPE=%s\"",
-//                                    Person.class.getName())).setSchema("PUBLIC")).getAll();
+
+    @Override
+    public ResponseDto performSearch(String partnerId, String sql, List<String> tables) throws Exception {
+        ClientConfiguration cfg = new ClientConfiguration().setAddresses(igniteServerAddress);
+        JSONArray jsonArray = new JSONArray();
+        List<String> listId = new ArrayList<>();
+        System.out.println("Connected to Ignite!");
+        ClientCache<Object, Object> cache = igniteClient.getOrCreateCache(partnerId);
+        FieldsQueryCursor<List<?>> cursor = cache.query(new SqlFieldsQuery(sql).setSchema("PUBLIC"));
+        for (List<?> row : cursor) {
+            JSONObject jsonObject = new JSONObject();
+            for (int i = 0; i < cursor.getColumnsCount(); i++) {
+                String value = (String) row.get(i);
+                jsonObject.put(cursor.getFieldName(i), value);
+                if (cursor.getFieldName(i).equalsIgnoreCase("_id")) {
+                    listId.add(value);
+                }
+            }
+            jsonArray.add(jsonObject);
+        }
 
 
-    private void createTableFromMap(IgniteClient igniteClient, String schemaName, String tableName, Map<String, String> fields) {
+        updateRowAsync(partnerId, listId, tables);
+        return new ResponseDto(jsonArray, listId);
+    }
+
+    @Override
+    @Async
+    public CompletableFuture<Void> updateRowAsync(String cacheName, List<String> ids, List<String> tables) {
+        return CompletableFuture.runAsync(() -> {
+            ClientConfiguration cfg = new ClientConfiguration().setAddresses(igniteServerAddress);
+            try (IgniteClient igniteClient = TcpIgniteClient.start(cfg)) {
+                ClientCache<Object, Object> cache = igniteClient.getOrCreateCache(cacheName);
+                String inClause = String.join(",", String.join(",", ids));
+                // Construct the SQL query
+                tables.forEach(table -> {
+                    String sql = String.format("UPDATE %s SET %s = %s + 1 WHERE %s IN (%s)", table, "frequency", "frequency", "_id", inClause);
+                    SqlFieldsQuery query = new SqlFieldsQuery(sql).setSchema("PUBLIC");
+                    cache.query(query);
+                });
+            }
+        });
+    }
+
+    private void createTableFromMap(IgniteClient igniteClient, String schemaName, String
+            tableName, Map<String, String> fields) {
         StringBuilder sql = new StringBuilder();
 
         // Start building the SQL CREATE TABLE statement
@@ -77,7 +127,9 @@ public class IgniteService {
         cache.query(new SqlFieldsQuery(sql).setSchema("PUBLIC")).getAll();
     }
 
-    public void insertToIgniteWithJsonFields(Map<String, String> fields,String cacheName,String tableName) {
+    @Override
+    public void insertToTrinoOrIgniteWithJsonFields(Map<String, String> fields, String cacheName, String
+            tableName) {
         ClientConfiguration cfg = new ClientConfiguration().setAddresses(igniteServerAddress);
 
         // Connect to the Ignite cluster
@@ -100,7 +152,7 @@ public class IgniteService {
             String sql = String.format("INSERT INTO %s (%s) VALUES (%s);", tableName, columns.toString(), valuesPlaceholder.toString());
 
             // Execute the query with the provided values.
-            cache.query(new SqlFieldsQuery(sql).setArgs(values)).getAll();
+            cache.query(new SqlFieldsQuery(sql).setSchema("PUBLIC").setArgs(values)).getAll();
             System.out.println("Data inserted successfully into table: " + tableName);
             // Example of accessing or creating a cache
         } catch (Exception e) {
@@ -112,7 +164,7 @@ public class IgniteService {
 //        Ignite ignite, IgniteCache<Long, Object> cache, String tableName, Map<String, Object> fields
     }
 
-    private void insertToIgniteWithSqlQuery(String query,String cacheName,String tableName) {
+    private void insertToIgniteWithSqlQuery(String query, String cacheName, String tableName) {
         ClientConfiguration cfg = new ClientConfiguration().setAddresses(igniteServerAddress);
         try (IgniteClient igniteClient = TcpIgniteClient.start(cfg)) {
             System.out.println("Connected to Ignite!");
@@ -120,8 +172,7 @@ public class IgniteService {
             cache.query(new SqlFieldsQuery(query)).getAll();
             System.out.println("Data inserted successfully into table: " + tableName);
         }
-}
-
+    }
 
 
 }

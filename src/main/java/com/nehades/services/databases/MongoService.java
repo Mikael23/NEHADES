@@ -2,12 +2,19 @@ package com.nehades.services.databases;
 
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
+import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.UpdateOptions;
+import com.mongodb.client.model.Updates;
 import com.mongodb.client.result.UpdateResult;
 import org.bson.Document;
+import org.hibernate.query.Query;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static com.mongodb.client.model.Filters.eq;
@@ -82,6 +89,24 @@ public class MongoService {
             }
         }
         return fieldOccurrences;
+    }
+
+
+    public void updateAccessLogAsync(String partnerId, List<String> idList) {
+        // Generate the key based on the current date
+        String today = LocalDate.now().toString();
+
+        MongoCollection<Document> collection = mongoClient
+                .getDatabase("myDatabase")
+                // Update the count for today's date, incrementing by 1
+                .getCollection(partnerId);
+        idList.forEach(id->{
+            collection.updateOne(
+                    Filters.eq("_id", id),                             // Match the document by car ID
+                    Updates.inc("accessCounts." + today, 1),              // Increment the count for today's date
+                    new com.mongodb.client.model.UpdateOptions().upsert(true)  // Upsert option to create if not exists
+            );
+        });
     }
 }
 

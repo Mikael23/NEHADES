@@ -97,7 +97,22 @@
             <artifactId>maven-core</artifactId>
             <version>3.9.9</version>
         </dependency>
-
+        <!-- https://mvnrepository.com/artifact/io.trino/trino-jdbc -->
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-jdbc</artifactId>
+            <version>380</version>
+        </dependency>
+        <dependency>
+            <groupId>net.minidev</groupId>
+            <artifactId>json-smart</artifactId>
+            <version>2.5.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webflux</artifactId>
+            <version>6.2.0</version>
+        </dependency>
     </dependencies>
     <build>
         <plugins>
